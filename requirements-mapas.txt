@@ -1,0 +1,3 @@
+# Solo para preparar mapas reales de LOLA en tu PC (preparar_lola.py).
+# La app desplegada NO lo necesita.
+rasterio
