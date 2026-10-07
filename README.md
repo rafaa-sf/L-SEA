@@ -3,8 +3,10 @@
 **🇬🇧 [English](#-english) · 🇪🇸 [Español](#-español)**
 
 > **NASA Space Apps Challenge 2026 (Málaga)** · Challenge / Reto: *CLPS Lunar Mission Browser*
+>
 > **Version / Versión:** EVO 2.6 · **License / Licencia:** [MIT](LICENSE)
-> **Demo:** _(Streamlit Cloud link / enlace, to add / por añadir)_
+>
+> 🚀 **Demo:** https://lunar-horizon-clps-browser.streamlit.app/
 
 ---
 
@@ -130,7 +132,12 @@ We state them openly because they are part of the project's rigour:
 
 ## Team
 
-_(names and roles, to complete)_
+**Team Lunar Horizon**
+
+| Name | Role |
+|---|---|
+| Rafael Enrique Guil Aranda | Lead Developer |
+| Marcos Medina Gómez | Product Manager & Data Specialist |
 
 ## License
 
@@ -260,7 +267,12 @@ Las dejamos explícitas porque forman parte del rigor del proyecto:
 
 ## Equipo
 
-_(nombres y funciones, por completar)_
+**Equipo Lunar Horizon**
+
+| Nombre | Función |
+|---|---|
+| Rafael Enrique Guil Aranda | Desarrollador principal (Lead Developer) |
+| Marcos Medina Gómez | Product Manager y Especialista de Datos |
 
 ## Licencia
 
