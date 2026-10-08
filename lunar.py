@@ -1,65 +1,54 @@
 # ==============================================================================
 # RUTA DEL FICHERO: lunar.py
-# FUNCIÓN: Motor físico, topografía, trazado de rayos y astrodinámica IAU/JPL
+# VERSIÓN: L-SEA v2.9 - WINDOW FINDER, EPS, DSN Y ASTRODINÁMICA JPL
 # ==============================================================================
 
 """
-Toda la 'física' de la app vive aquí, separada de la interfaz (app.py).
-
-Convención de ejes del MAPA: filas = eje Y (Norte = filas crecientes),
-columnas = eje X (Este = columnas crecientes). Azimut: 0° = arriba del mapa,
-90° = derecha. Si el mapa NO está orientado al norte local, el parámetro
-`rumbo` corrige la diferencia (preparar_lola.py lo calcula solo).
+Motor físico y astrodinámico de L-SEA:
+- Trazado de rayos topográficos para horizonte 360°.
+- Modelo de Potencia Eléctrica (EPS) con paneles GaAs.
+- Red DSN con telemetría angular.
+- Buscador vectorizado de ventanas de aterrizaje anuales (365 días) con perfiles Artemis/CLPS.
 """
-from datetime import timezone
+from datetime import datetime, timezone, timedelta
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 from skyfield import almanac
-from skyfield.api import Loader
+from skyfield.api import Loader, wgs84
 
 CARPETA_DATOS = Path(__file__).parent / "datos"
-RADIO_SOL = 0.267   # radio angular del Sol (°): "visible" = el borde superior asoma
+RADIO_SOL = 0.267
+CONSTANTE_SOLAR = 1361.0
 
 
 # =========================================================== TERRENO
 def pendiente_grados(dem, metros_por_celda):
-    """Pendiente REAL en grados: arctan(dz/dx), usando la escala del mapa."""
     dzdy, dzdx = np.gradient(dem, metros_por_celda)
     return np.degrees(np.arctan(np.hypot(dzdx, dzdy)))
 
 
 def perfil_horizonte(dem, fila, col, metros_por_celda, altura_mastil=2.0):
-    """
-    Para cada azimut (0..359°) devuelve la elevación del horizonte (grados)
-    visto desde el módulo: sigue ese rayo y se queda con el mayor ángulo con
-    el que el terreno 'tapa' el cielo.
-    """
     n_filas, n_cols = dem.shape
     z0 = dem[fila, col] + altura_mastil
-    dist = np.arange(1, int(np.hypot(n_filas, n_cols)))        # distancias en celdas
-    az = np.radians(np.arange(360))[:, None]                   # (360, 1)
+    dist = np.arange(1, int(np.hypot(n_filas, n_cols)))
+    az = np.radians(np.arange(360))[:, None]
 
-    f = np.rint(fila + np.cos(az) * dist).astype(int)          # (360, n_dist)
+    f = np.rint(fila + np.cos(az) * dist).astype(int)
     c = np.rint(col + np.sin(az) * dist).astype(int)
     dentro = (f >= 0) & (f < n_filas) & (c >= 0) & (c < n_cols)
     f, c = np.clip(f, 0, n_filas - 1), np.clip(c, 0, n_cols - 1)
 
     angulo = np.degrees(np.arctan2(dem[f, c] - z0, dist * metros_por_celda))
-    angulo = np.where(dentro, angulo, -90.0)                   # fuera del mapa: ignorar
-    return np.maximum(angulo.max(axis=1), 0.0)                 # suelo llano = 0°
+    angulo = np.where(dentro, angulo, -90.0)
+    return np.maximum(angulo.max(axis=1), 0.0)
 
 
-# =========================================================== ILUMINACIÓN
+# =========================================================== ILUMINACIÓN Y OCLUSIÓN
 def sombreado(dem, metros_por_celda, sol_az, sol_el, ambiente=0.06):
-    """
-    Hillshade: cuánta luz recibe cada celda según hacia dónde mira su pendiente.
-    Devuelve valores 0..1. Con el Sol tan bajo (~1°) el suelo llano recibe muy
-    poca luz, así que se aplica una curva de exposición para que se vea bien.
-    """
     if sol_el <= 0:
-        return np.full(dem.shape, ambiente)
+        return np.full(dem.shape, ambiente, dtype=np.float32)
     dzdy, dzdx = np.gradient(dem, metros_por_celda)
     az, el = np.radians(sol_az), np.radians(sol_el)
     s = np.array([np.sin(az) * np.cos(el), np.cos(az) * np.cos(el), np.sin(el)])
@@ -68,19 +57,15 @@ def sombreado(dem, metros_por_celda, sol_az, sol_el, ambiente=0.06):
     return ambiente + (1 - ambiente) * (1 - np.exp(-25 * luz))
 
 
-def sombras_proyectadas(dem, metros_por_celda, sol_az, sol_el, stride=2):
-    """
-    True donde una montaña tapa al Sol (sombra proyectada).
-    Acelerado con stride dinámico para cálculo a 60 FPS.
-    """
-    if sol_el <= 0:
-        return np.ones(dem.shape, dtype=bool)           # De noche todo es sombra
+def sombras_proyectadas(dem, metros_por_celda, azimut, elevacion, stride=2):
+    if elevacion <= 0:
+        return np.ones(dem.shape, dtype=bool)
     
     n_f, n_c = dem.shape
     ii, jj = np.mgrid[0:n_f, 0:n_c]
-    dy, dx = np.cos(np.radians(sol_az)), np.sin(np.radians(sol_az))
-    tan_sol = np.tan(np.radians(sol_el))
-    sombra = np.zeros(dem.shape, dtype=bool)
+    dy, dx = np.cos(np.radians(azimut)), np.sin(np.radians(azimut))
+    tan_el = np.tan(np.radians(elevacion))
+    bloqueado = np.zeros(dem.shape, dtype=bool)
     
     limite = max(n_f, n_c)
     for k in range(1, limite, stride):
@@ -90,16 +75,25 @@ def sombras_proyectadas(dem, metros_por_celda, sol_az, sol_el, stride=2):
         if not dentro.any():
             break
         tapa = (dem[np.clip(f, 0, n_f - 1), np.clip(c, 0, n_c - 1)] - dem) / (k * metros_por_celda)
-        sombra |= dentro & (tapa > tan_sol)
+        bloqueado |= dentro & (tapa > tan_el)
         
-    return sombra
+    return bloqueado
 
 
-# ========================================== SOL, TIERRA Y FASES (EFEMÉRIDES)
+# =========================================================== MODELO EPS
+def calcular_potencia_electrica(sol_visible, sol_el, area_m2=2.0, eficiencia=0.29, carga_base_w=100.0):
+    if not sol_visible or sol_el <= 0:
+        return 0.0, -carga_base_w, 0.0
+    angulo_incidencia = np.cos(np.radians(sol_el))
+    potencia_bruta = CONSTANTE_SOLAR * area_m2 * eficiencia * angulo_incidencia
+    potencia_neta = potencia_bruta - carga_base_w
+    return round(potencia_bruta, 0), round(potencia_neta, 0), CONSTANTE_SOLAR
+
+
+# ========================================== ASTRODINÁMICA (JPL DE421)
 @lru_cache(maxsize=1)
 def _skyfield():
-    """Carga una sola vez la escala de tiempos y las efemérides JPL DE421."""
-    cargador = Loader(str(CARPETA_DATOS), verbose=False)   # si falta de421.bsp lo descarga
+    cargador = Loader(str(CARPETA_DATOS), verbose=False)
     return cargador.timescale(), cargador("de421.bsp")
 
 
@@ -114,12 +108,6 @@ def _R3(a):
 
 
 def _matriz_icrf_a_luna(d):
-    """
-    Matriz que pasa un vector del cielo (ICRF) a ejes fijos a la Luna.
-    Usa el modelo de rotación de la Luna de la IAU (Archinal et al.), que ya
-    incluye la libración; error ≲ 0,05° respecto a las efemérides de la NASA.
-    d = días desde J2000 (TDB).
-    """
     T = d / 36525.0
     E = np.radians(np.array([
         125.045 - 0.0529921 * d, 250.089 - 0.1059842 * d, 260.008 + 13.0120009 * d,
@@ -141,7 +129,6 @@ def _matriz_icrf_a_luna(d):
 
 
 def _base_local(lat, lon):
-    """Vectores Este, Norte y Arriba del punto (lat, lon) en ejes fijos a la Luna."""
     la, lo = np.radians(lat), np.radians(lon)
     este = np.array([-np.sin(lo), np.cos(lo), 0.0])
     norte = np.array([-np.sin(la) * np.cos(lo), -np.sin(la) * np.sin(lo), np.cos(la)])
@@ -150,7 +137,6 @@ def _base_local(lat, lon):
 
 
 def efemerides(fechas, lat, lon, rumbo=0.0):
-    """Posición REAL del Sol y la Tierra según efemérides JPL DE421."""
     ts, eph = _skyfield()
     t = ts.from_datetimes([f.replace(tzinfo=timezone.utc) for f in fechas])
     R = _matriz_icrf_a_luna(np.atleast_1d(t.tdb - 2451545.0))
@@ -170,41 +156,58 @@ def efemerides(fechas, lat, lon, rumbo=0.0):
 
 
 def visible(elevacion, azimut, horizonte, radio=0.0):
-    """¿Asoma el astro por encima del horizonte del terreno?"""
     idx = np.rint(azimut).astype(int) % 360
     return (np.asarray(elevacion) + radio) > horizonte[idx]
 
 
 def icono_fase(grados):
-    """Emoji de la fase lunar (0=nueva ... 180=llena)."""
     return "🌑🌒🌓🌔🌕🌖🌗🌘"[int((grados + 22.5) // 45) % 8]
 
 
-def mapa_idoneidad(pendientes, exposicion_luz, max_pendiente=10.0):
-    """
-    Índice de idoneidad multicriterio para aterrizaje lunar (0% a 100%).
-    Combina:
-      1. Seguridad topográfica: penalización cuadrática por exceso de pendiente.
-      2. Factor energético: pondera positivamente las zonas con mayor captación solar.
-    """
-    factor_seguridad = np.clip(1.0 - (pendientes / max_pendiente), 0.0, 1.0) ** 2
-    factor_luz = np.clip(exposicion_luz, 0.0, 1.0)
+# =========================================================== EVALUACIÓN MULTIDÍA
+def evaluar_mision_multidia(dem, mpc, fechas_mision, lat, lon, rumbo, ponderacion_comms=0.50, max_pendiente=10.0):
+    ef = efemerides(fechas_mision, lat, lon, rumbo)
+    n_dias = len(fechas_mision)
     
-    score = (0.60 * factor_seguridad + 0.40 * factor_luz) * 100.0
-    return np.round(score, 1)
+    acum_sol = np.zeros(dem.shape, dtype=np.float32)
+    acum_dte = np.zeros(dem.shape, dtype=np.float32)
+    
+    for k in range(n_dias):
+        s_az, s_el = float(ef["sol_az"][k]), float(ef["sol_el"][k])
+        t_az, t_el = float(ef["tierra_az"][k]), float(ef["tierra_el"][k])
+        
+        if s_el > 0:
+            s_sombra = sombras_proyectadas(dem, mpc, s_az, s_el, stride=3)
+            s_luz = sombreado(dem, mpc, s_az, s_el)
+            acum_sol += np.where(s_sombra, 0.02, s_luz)
+            
+        if t_el > 0:
+            t_sombra = sombras_proyectadas(dem, mpc, t_az, t_el, stride=3)
+            acum_dte += np.where(t_sombra, 0.0, 1.0)
+            
+    pct_sol = (acum_sol / n_dias) * 100.0
+    pct_dte = (acum_dte / n_dias) * 100.0
+    
+    dzdy, dzdx = np.gradient(dem, mpc)
+    pend = np.degrees(np.arctan(np.hypot(dzdx, dzdy)))
+    factor_seguridad = np.clip(1.0 - (pend / max_pendiente), 0.0, 1.0) ** 2
+    
+    peso_seguridad = 0.40
+    peso_variable = 0.60
+    peso_comms = peso_variable * ponderacion_comms
+    peso_sol = peso_variable * (1.0 - ponderacion_comms)
+    
+    score = (
+        peso_seguridad * (factor_seguridad * 100.0) +
+        peso_sol * np.clip(pct_sol, 0.0, 100.0) +
+        peso_comms * np.clip(pct_dte, 0.0, 100.0)
+    )
+    return np.round(score, 1), np.round(pct_sol, 1), np.round(pct_dte, 1)
+
 
 def top_sitios_aterrizaje(idoneidad, pendientes, dem, max_pend=10.0, n_sitios=5, radio_exclusion_px=12, deadzone_borde_pct=0.08):
-    """
-    Algoritmo Autopilot Artemis IV:
-    1. Deadzone: Elimina los bordes del mapa para evitar artefactos del recorte.
-    2. Filtro Anti-Glitch (Meseta 3x3): Promedia la idoneidad con sus vecinos inmediatos.
-       Si un píxel es plano pero está al borde de un abismo, su nota se desploma.
-    3. Supresión No Máxima: Encuentra los N mejores puntos asegurando que estén 
-       separados físicamente al menos 'radio_exclusion_px' celdas entre sí.
-    """
     filas, cols = idoneidad.shape
     
-    # 1. Filtro espacial de área (convolución 3x3 pura en NumPy, sin dependencias extra)
     pad = np.pad(idoneidad, 1, mode='edge')
     vecindad = (
         pad[:-2, :-2] + pad[:-2, 1:-1] + pad[:-2, 2:] +
@@ -212,19 +215,14 @@ def top_sitios_aterrizaje(idoneidad, pendientes, dem, max_pend=10.0, n_sitios=5,
         pad[2:, :-2] + pad[2:, 1:-1] + pad[2:, 2:]
     ) / 9.0
     
-    # 2. Deadzone de borde (máscara de exclusión de seguridad perimetral)
     mar_f = int(filas * deadzone_borde_pct)
     mar_c = int(cols * deadzone_borde_pct)
     
     mascara_activa = np.zeros((filas, cols), dtype=bool)
     mascara_activa[mar_f:filas - mar_f, mar_c:cols - mar_c] = True
-    
-    # Descartar cualquier zona cuya pendiente supere el límite crítico
     mascara_activa &= (pendientes <= max_pend)
     
     puntuacion_filtrada = np.where(mascara_activa, vecindad, -1.0)
-    
-    # 3. Supresión No Máxima para encontrar Top N sitios dispersos
     sitios = []
     copia_score = puntuacion_filtrada.copy()
     
@@ -234,7 +232,7 @@ def top_sitios_aterrizaje(idoneidad, pendientes, dem, max_pend=10.0, n_sitios=5,
         score_val = float(copia_score[f_max, c_max])
         
         if score_val <= 0:
-            break  # No quedan más zonas seguras
+            break
             
         sitios.append({
             "rank": rank,
@@ -245,9 +243,107 @@ def top_sitios_aterrizaje(idoneidad, pendientes, dem, max_pend=10.0, n_sitios=5,
             "altura": round(float(dem[f_max, c_max]), 0)
         })
         
-        # Máscara circular de exclusión para no repetir la misma colina
         y_grid, x_grid = np.ogrid[:filas, :cols]
         dist_sq = (y_grid - f_max)**2 + (x_grid - c_max)**2
         copia_score[dist_sq <= radio_exclusion_px**2] = -1.0
         
     return sitios
+
+
+# =========================================================== TRACKING DSN
+DSN_ESTACIONES = {
+    "Madrid (CDSCC)": (40.427, -4.249),
+    "Goldstone (GDSCC)": (35.426, -116.890),
+    "Canberra (CDSCC)": (-35.401, 148.981),
+}
+
+def telemetria_dsn(fecha_utc):
+    ts, eph = _skyfield()
+    t = ts.from_datetime(fecha_utc.replace(tzinfo=timezone.utc))
+    tierra = eph["earth"]
+    luna = eph["moon"]
+    
+    resultado = {}
+    for nombre, (lat, lon) in DSN_ESTACIONES.items():
+        estacion = tierra + wgs84.latlon(lat, lon)
+        astro = estacion.at(t).observe(luna).apparent()
+        alt, _, _ = astro.altaz()
+        resultado[nombre] = round(alt.degrees, 1)
+    return resultado
+
+
+# =========================================================== BUSCADOR DE VENTANAS (WINDOW FINDER)
+def buscar_ventanas_anuales(dem, fila, col, mpc, lat, lon, rumbo, fecha_inicio, dias_busqueda=365,
+                            duracion_estancia=7, min_sol_pct=80.0, min_dte_pct=50.0, mastil=2.0):
+    """
+    Algoritmo Sliding Window (365 días):
+    Evalúa cada posible día de lanzamiento T0 contra la duración completa de estancia.
+    Devuelve la máscara anual de viabilidad (0 o 1) y la lista de oportunidades óptimas.
+    """
+    horiz = perfil_horizonte(dem, fila, col, mpc, altura_mastil=mastil)
+    fechas_anuales = [fecha_inicio + timedelta(days=i) for i in range(dias_busqueda)]
+    ef = efemerides(fechas_anuales, lat, lon, rumbo)
+    
+    vis_sol = visible(ef["sol_el"], ef["sol_az"], horiz, radio=RADIO_SOL)
+    vis_tierra = visible(ef["tierra_el"], ef["tierra_az"], horiz)
+    
+    mascara_anual = np.zeros(dias_busqueda, dtype=int)
+    oportunidades = []
+    
+    limite = dias_busqueda - duracion_estancia
+    for d in range(limite):
+        sol_ventana = vis_sol[d:d + duracion_estancia]
+        dte_ventana = vis_tierra[d:d + duracion_estancia]
+        
+        pct_sol = float(sol_ventana.mean() * 100.0)
+        pct_dte = float(dte_ventana.mean() * 100.0)
+        
+        # Criterio de Touchdown: aterrizar obligatoriamente con sol y enlace directo
+        condicion_touchdown = sol_ventana[0] and dte_ventana[0]
+        
+        if condicion_touchdown and pct_sol >= min_sol_pct and pct_dte >= min_dte_pct:
+            mascara_anual[d] = 1
+            score = round(0.6 * pct_sol + 0.4 * pct_dte, 1)
+            oportunidades.append({
+                "t0": fechas_anuales[d].strftime("%Y-%m-%d"),
+                "cierre": fechas_anuales[d + duracion_estancia].strftime("%Y-%m-%d"),
+                "sol_pct": round(pct_sol, 1),
+                "dte_pct": round(pct_dte, 1),
+                "score": score
+            })
+            
+    # Agrupar días consecutivos en ventanas consolidadas
+    ventanas_agrupadas = []
+    if oportunidades:
+        ventana_actual = dict(oportunidades[0])
+        dias_consecutivos = 1
+        mejor_score = ventana_actual["score"]
+        mejor_t0 = ventana_actual["t0"]
+        
+        for op in oportunidades[1:]:
+            d_ant = datetime.strptime(ventana_actual["t0"], "%Y-%m-%d")
+            d_sig = datetime.strptime(op["t0"], "%Y-%m-%d")
+            
+            if (d_sig - d_ant).days == dias_consecutivos:
+                dias_consecutivos += 1
+                ventana_actual["cierre"] = op["cierre"]
+                if op["score"] > mejor_score:
+                    mejor_score = op["score"]
+                    mejor_t0 = op["t0"]
+            else:
+                ventana_actual["dias_viables"] = dias_consecutivos
+                ventana_actual["mejor_t0"] = mejor_t0
+                ventana_actual["score"] = mejor_score
+                ventanas_agrupadas.append(ventana_actual)
+                
+                ventana_actual = dict(op)
+                dias_consecutivos = 1
+                mejor_score = ventana_actual["score"]
+                mejor_t0 = ventana_actual["t0"]
+                
+        ventana_actual["dias_viables"] = dias_consecutivos
+        ventana_actual["mejor_t0"] = mejor_t0
+        ventana_actual["score"] = mejor_score
+        ventanas_agrupadas.append(ventana_actual)
+        
+    return mascara_anual, fechas_anuales, ventanas_agrupadas

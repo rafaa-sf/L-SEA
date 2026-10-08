@@ -4,7 +4,7 @@
 
 > **NASA Space Apps Challenge 2026 (Málaga)** · Challenge / Reto: *CLPS Lunar Mission Browser*
 >
-> **Version / Versión:** EVO 2.6 (L-SEA) · **License / Licencia:** [MIT](LICENSE)
+> **Version / Versión:** EVO 3.2 (L-SEA Autonomous Suite) · **License / Licencia:** [MIT](LICENSE)
 >
 > 🚀 **Demo:** https://lunar-horizon-clps-browser.streamlit.app/
 
@@ -14,49 +14,22 @@
 
 ## The problem
 
-Choosing where and when to land near the lunar south pole is hard. The Sun skims the horizon at about 1°, mountains cast kilometre-long shadows, and the Earth (needed for Direct-to-Earth communication) bobs in and out of view because of libration. A site that looks perfect on one day can be dark or out of contact on the next.
+Choosing where and when to land near the lunar south pole is one of the most perilous challenges in modern spaceflight. The Sun skims the horizon at grazing angles (~1.5°), mountain massifs cast multi-kilometre shadows, and the Earth (essential for Direct-to-Earth telemetry) oscillates in and out of sight due to lunar libration. 
 
-## Our solution
+Most existing lunar browsers are **passive visualizers**: they present raw maps and leave human planners to spend dozens of hours sifting through dense ephemeris graphs. When an Artemis Human Landing System (HLS) or a commercial CLPS lander is descending, mission controllers need **actionable decisions, not passive charts**.
 
-**L-SEA (Lunar Site Evaluation Algorithm)** is a web tool that lets mission planners **compare landing sites and dates** and see, for any point on a real lunar elevation map, whether it is **safe, sunlit and in line of sight with Earth**, and then **finds the best sites automatically**.
+## Our solution: L-SEA
+
+**L-SEA (Lunar Site Evaluation Algorithm)** is an autonomous mission planning and tactical landing evaluation engine. It takes NASA LRO/LOLA elevation data, combines it with high-precision JPL DE421 ephemeris and IAU lunar orientation models, and autonomously resolves:
+1. **WHERE to land:** Spatial multi-criteria optimization that isolates safe plateaus and eliminates cliff-edge hazards.
+2. **WHEN to land:** A 365-day annual sliding-window flight manifest generator that determines optimal launch and landing windows.
+3. **HOW to survive:** Multi-day electrical power subsystem (EPS) modeling, battery-bridging analysis, and Deep Space Network (DSN) ground station tracking.
+
+---
 
 ### What you can do
 
-| Question | How the app answers it |
+| Operational Question | L-SEA Answer Engine |
 |---|---|
-| Is it safe to land? | Real terrain slope in degrees with a traffic light: optimal < 5°, caution ≤ 10°, danger > 10° |
-| Is there sunlight? | The Sun is checked against the **terrain horizon** at its azimuth, not a flat horizon |
-| Is there a line of sight to Earth? | Same method for the Earth (Direct-to-Earth window) |
-| How does the month evolve? | 30-day timeline with lunar phases 🌑🌓🌕 and % of days with Sun, with Earth link, and with both |
-| **Where should we land?** | **L-SEA Autopilot:** ranks the Top 5 safest, best-lit sites on the map and jumps to any of them in one click |
-
-### New in EVO 2.6: L-SEA Autopilot & Tactical Site Ranker
-
-- **Suitability index (0–100 %)** that combines **60 % topographic safety** (quadratic penalty as slope approaches the limit) and **40 % solar exposure**.
-- **Top 5 site finder** with three safeguards:
-  1. **Perimeter dead-zone (8 %)** to discard artefacts at the map edge.
-  2. **Anti-glitch 3×3 filter:** a flat pixel next to a cliff is penalised because its neighbours drag its score down.
-  3. **Non-maximum suppression:** the five sites are physically separated, so you never get the same hill five times.
-- **Mission cockpit interface:** 3D relief, illumination map, slope map, suitability map, full 360° radial horizon profile (lander mast 2 m) and per-point telemetry.
-
-### Visualisations
-
-3D relief with **hillshade and cast shadows** for the chosen day · illumination map · slope map · suitability map with Top-5 markers · horizon profile with Sun and Earth overlaid · 30-day timeline.
-
-## How it works
-
-- **Terrain:** elevation models (DEM) from **NASA LRO/LOLA**, stored as `.npy` arrays in metres plus a `.json` with the real scale (metres per cell).
-- **Slope:** `arctan(dz/dx)` using the real map scale.
-- **Horizon:** from the lander, a ray is traced along each of the 360° of azimuth, keeping the highest angle at which terrain blocks the sky.
-- **Sun, Earth and phases:** computed with **Skyfield** and the **JPL DE421** ephemerides (valid 1900–2050), combined with the **IAU** lunar rotation and libration model. Sanity-checked against known ranges: Earth libration ≈ ±6.8° (latitude) and ±7.9° (longitude), sub-solar inclination ≈ ±1.5°.
-- **Illumination:** hillshade with an exposure curve (the Sun is ~1° above the horizon) plus cast shadows by ray tracing toward the Sun.
-- **Performance:** calculations use the full-resolution map; only drawing is reduced to ≤ 250×250 cells. Tested with 1,500×1,500 maps.
-- **Architecture:** the physics (`lunar.py`) is fully separated from the interface (`app.py`), so it can later power a desktop tool with higher-resolution maps and GPU-accelerated 3D.
-
-## Install and run
-
-Requires Python 3.10+ (developed on 3.14, also tested on 3.12).
-
-```bash
-python -m pip install -r requirements.txt
-python -m streamlit run app.py
+| **Where is it safe to touch down?** | High-precision slope tensor with Artemis safety thresholds: Optimal (<5°), Caution (≤10°), Critical Hazard (>10°). |
+| **Where are the top landing sites?** | **L-SEA Autopilot:** 3×3 spatial anti-glitch filter + 8% pe
