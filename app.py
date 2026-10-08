@@ -1,6 +1,6 @@
 # ==============================================================================
 # RUTA DEL FICHERO: app.py
-# VERSIÓN: EVO 2.6 - ARTEMIS IV AUTOPILOT & TACTICAL SITE RANKER
+# VERSIÓN: L-SEA v2.6 - LUNAR SITE EVALUATION ALGORITHM
 # ==============================================================================
 
 import json
@@ -13,10 +13,14 @@ import streamlit as st
 
 import lunar
 
-st.set_page_config(page_title="Artemis IV / CLPS Mission Browser", layout="wide")
+st.set_page_config(
+    page_title="L-SEA · Lunar Site Evaluation Algorithm", 
+    page_icon="🌔",
+    layout="wide"
+)
 
 # ==============================================================================
-# ESTILOS: ARTEMIS IV GLASS COCKPIT HUD
+# ESTILOS: L-SEA GLASS COCKPIT HUD
 # ==============================================================================
 st.markdown("""
 <style>
@@ -165,7 +169,7 @@ def iluminacion(dem_vis, mpc_vis, sol_az, sol_el):
 
 # ----------------------------------------------------------------- SIDEBAR & AUTOPILOT
 stems = sorted(p.stem for p in CARPETA_MAPAS.glob("*.json"))
-st.sidebar.markdown("### 🛰️ TELEMETRÍA ARTEMIS IV")
+st.sidebar.markdown("### 🛰️ TELEMETRÍA L-SEA")
 stem = st.sidebar.selectbox("Sitio Candidato (LOLA DEM)", stems, format_func=lambda s: NOMBRES.get(s, s))
 fecha_ini = st.sidebar.date_input(
     "Inicio de Ventana Operativa", 
@@ -252,7 +256,7 @@ top_xs = [-km / 2 + km * (s["col"] * paso) / (columnas - 1) for s in top5]
 top_ys = [-km / 2 + km * (s["fila"] * paso) / (filas - 1) for s in top5]
 
 # ------------------------------------------------------------ INTERFAZ
-st.title("🌔 ARTEMIS IV · TACTICAL LUNAR BROWSER")
+st.title("🌔 L-SEA · LUNAR SITE EVALUATION ALGORITHM")
 
 # HUD Telemetría de Vuelo en tiempo real
 st.markdown(f"""
@@ -281,7 +285,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 tab3d, tabluz, tabpend, tabscore = st.tabs([
-    "🏔️ Topografía 3D (Artemis Shader)", 
+    "🏔️ Topografía 3D (L-SEA Shader)", 
     "🌗 Mapa de Iluminación", 
     "📐 Análisis de Pendientes", 
     "🎯 Matriz de Idoneidad (Landing Ranker)"
@@ -301,7 +305,7 @@ with tab3d:
             lighting=dict(ambient=0.9, diffuse=0.1, specular=0.1, fresnel=0.1),
             customdata=dem_vis,
             hovertemplate=(
-                "<b>🏔️ Relieve Lunar Artemis</b><br>"
+                "<b>🏔️ Relieve Lunar L-SEA</b><br>"
                 "Este: %{x:+.2f} km<br>"
                 "Norte: %{y:+.2f} km<br>"
                 "Cota real: <b>%{customdata:,.0f} m</b>"
@@ -336,7 +340,7 @@ with tab3d:
         )
     )
     st.plotly_chart(fig3d, width="stretch")
-    st.caption("Shader Artemis: sombras frías en regiones PSR y crestas de luz en oro solar.")
+    st.caption("Shader L-SEA: sombras frías en regiones PSR y crestas de luz en oro solar.")
 
 with tabluz:
     figl = go.Figure([
@@ -397,7 +401,7 @@ with tabscore:
             x=xs, y=ys, z=idoneidad_mapa, colorscale="Plasma", zmin=0, zmax=100,
             colorbar=dict(title="Score (%)", tickfont=dict(color="#00f0ff")),
             hovertemplate=(
-                "<b>🎯 Matriz Táctica Artemis IV</b><br>"
+                "<b>🎯 Matriz Táctica L-SEA</b><br>"
                 "Este: %{x:+.2f} km<br>"
                 "Norte: %{y:+.2f} km<br>"
                 "Idoneidad: <b>%{z:.1f}%</b>"
@@ -459,7 +463,7 @@ with c:
         st.error("**En eclipse (batería)**")
 
 with d:
-    st.markdown("#### 🎯 SCORE ARTEMIS")
+    st.markdown("#### 🎯 SCORE L-SEA")
     st.metric("Índice Idoneidad", f"{score_actual:.1f}%")
     if score_actual >= 75:
         st.success("**Sitio Prioritario (Tier 1)**")
